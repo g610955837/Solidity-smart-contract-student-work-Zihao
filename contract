@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+contract SimpleSavingsAccount is ReentrancyGuard {
+    // 映射表用于跟踪每个用户的余额和存款时间
+    mapping(address => uint256) public balances;
+    mapping(address => uint256) public depositTimes;
+
+    // 利率每秒（例如每秒0.0001%）
+    uint256 public constant interestRate = 0.0001 * (1 ether); // 每秒0.0001%
+
+    // 存款奖励比例
+    uint256 public constant depositRewardRate = 0.01 * (1 ether); // 1%
+
+    // 存款期限（单位：秒）
+    uint256 public constant depositDuration = 30 days; // 30天
+
+    // 提前取款罚金比例
+    uint256 public constant earlyWithdrawalPenalty = 0.5 * (1 ether); // 50%
+
+    // 事件定义，记录存款和取款活动
+    event Deposit(address indexed user, uint256 amount);
+    event Withdrawal(address indexed user, uint256 amount);
+
+    /**
+     * @dev 存入以太币到账户，并给予存款奖励。
+     */
+    function deposit() public payable nonReentrant {
+        // 确保存款金额大于零
+        require(msg.value > 0, "Your money must > 0");
+
+        // 计算存款奖励
+        uint256 reward = msg.value * depositRewardRate / 1 ether;
+
+        // 更新用户的余额，包括存款和奖励
+        balances[msg.sender] += msg.value + reward;
+
+        // 记录存款时间
+        depositTimes[msg.sender] = block.timestamp;
+
+        // 触发存款事件
+        emit Deposit(msg.sender, msg.value + reward);
+    }
+
+    /**
+     * @dev 提取累计的余额和利息。
+     */
+    function withdraw(uint256 _amount) public nonReentrant {
+        // 确保提取的金额不超过用户的当前余额加上利息
+        require(_amount <= getBalanceWithInterest(msg.sender), "Fund is not enough");
+
+        // 计算当前时间与存款时间的差值
+        uint256 secondsPassed = block.timestamp - depositTimes[msg.sender];
+
+        // 如果提前取款，扣除部分利息
+        if (secondsPassed < depositDuration) {
+            // 计算利息
+            uint256 interest = _amount - balances[msg.sender];
+            // 计算罚金
+            uint256 penalty = interest * earlyWithdrawalPenalty / 1 ether;
+            // 扣除罚金
+            _amount -= penalty;
+        }
+
+        // 更新用户的余额
+        balances[msg.sender] -= _amount;
+
+        // 将资金转移到用户地址
+        payable(msg.sender).transfer(_amount);
+
+        // 触发取款事件
+        emit Withdrawal(msg.sender, _amount);
+    }
+
+    /**
+     * @dev 计算当前余额包括利息。
+     */
+    function getBalanceWithInterest(address _account) public view returns (uint256) {
+        // 计算从存款到现在的时间差（秒）
+        uint256 secondsPassed = block.timestamp - depositTimes[_account];
+
+        // 计算并返回带利息的余额
+        return balances[_account] + (balances[_account] * secondsPassed * interestRate / 1 ether);
+    }
+}
